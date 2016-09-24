@@ -39,7 +39,7 @@ class InstagramSecretAPI:
     def query(self,data, cookie=None, csrf="w0onO0YkXQOT5gnC6srgOGbvbZ3tDDaC"):
 
         # cookie monster
-        cookie = "mid=V76nuQAEAAH-CuEOAdoMiatCGu5Z; fbm_124024574287414=base_domain=.instagram.com; sessionid=IGSC2e745c64acfec2c25f6b9ba66880db3560c5b6baf5cc040f437a113321a740be%3AuO4GMPJCl1i1IJHUvQXMCXh5siI4IkTx%3A%7B%22_token_ver%22%3A2%2C%22_auth_user_id%22%3A3776064946%2C%22_token%22%3A%223776064946%3AghEjJxxVFeyX135oEPUGCr5zrPOdjSYe%3A3f2e23e7befda143990030fd057bbedb047b93d234bcb542e421d951283e5c8e%22%2C%22_auth_user_backend%22%3A%22accounts.backends.CaseInsensitiveModelBackend%22%2C%22last_refreshed%22%3A1474631055.237057%2C%22_platform%22%3A4%2C%22_auth_user_hash%22%3A%22%22%7D; ig_pr=2; ig_vw=1266; csrftoken=%s; s_network=; ds_user_id=3776064946" %(csrf)
+        cookie = "mid=V76nuQAEAAH-CuEOAdoMiatCGu5Z; fbm_124024574287414=base_domain=.instagram.com; sessionid=IGSC2e745c64acfec2c25f6b9ba66880db3560c5b6baf5cc040f437a113321a740be%3AuO4GMPJCl1i1IJHUvQXMCXh5siI4IkTx%3A%7B%22_token_ver%22%3A2%2C%22_auth_user_id%22%3A3776064946%2C%22_token%22%3A%223776064946%3AghEjJxxVFeyX135oEPUGCr5zrPOdjSYe%3A3f2e23e7befda143990030fd057bbedb047b93d234bcb542e421d951283e5c8e%22%2C%22_auth_user_backend%22%3A%22accounts.backends.CaseInsensitiveModelBackend%22%2C%22last_refreshed%22%3A1474631055.237057%2C%22_platform%22%3A4%2C%22_auth_user_hash%22%3A%22%22%7D; ig_pr=2; ig_vw=1266; csrftoken=w0onO0YkXQOT5gnC6srgOGbvbZ3tDDaC; s_network=; ds_user_id=3776064946"
 
         # build request header
         # as realistically as possible to mimic browser
@@ -98,14 +98,14 @@ class StokaInstance:
     #default seed user
     seed_user = {"id": 184742362};
 
-    def __init__(self, rabbit_mq_connection, options={}, group_name="default_name"):
+    def __init__(self, rabbit_mq_connection, options={}, group_name="default_stoka"):
         self.igSecret = InstagramSecretAPI()
         self.seed_user = options['ig_user'];
         self.group_name = group_name;
         self.rabbit_channel = rabbit_mq_connection.channel();
         self.rabbit_channel.queue_declare(queue=group_name,durable=True)
         self.mongo_client = MongoClient("mongodb://localhost:27017")
-        self.mongo_db = self.mongo_client[group_name]
+        self.mongo_db = self.mongo_client['stoka_' + group_name]
         #seed the queue
         self.pushQ(self.seed_user)
 
@@ -123,8 +123,15 @@ class StokaInstance:
     # persist to mongodb
     def save(self, object):
         # print(object)
-        print("[x] Persisting %s (%s) / %d" % (object["id"], object["username"], len(self.STORAGE)))
+        
+        # short term memory checking if we have seen this
         self.STORAGE[object["id"]] = True
+        try:
+            result = self.mongo_db.human.insert_one(object)
+            print("[x] Persisting %s (%s) / mongoId -> %s" % (object["id"], object["username"], result.inserted_id))
+        except Exception as ex:
+            print("[o] Exception while saving to mongo (might be duplicate)", ex)
+
     
     # check if it's in mongo or in some sort of fast memoryview
     # this is for preventing dupe , it's not 100% proof but it's better than nthing
@@ -150,7 +157,6 @@ class StokaInstance:
         # print(" [x] Received %r" % (body,))
         # time.sleep( body.count('.') )
         # print(" [x] Done")
-        
         ch.basic_ack(delivery_tag = method.delivery_tag)
         p = json.loads(body.decode("utf-8") )
 
@@ -158,11 +164,23 @@ class StokaInstance:
         self.process(p)
 
         print("[x] Working on ", p["id"], "(%s)" % (p["username"],))
-        # p = json.loads()
-
-        #save visited node
-        self.save(p)
+        
         # print(p)
+        
+        F = self.find_suggested(p["id"])
+        
+        if "chaining" not in F:
+            return
+        if "nodes" not in F["chaining"]:
+            return
+        # for f in F["followed_by"]["nodes"]:
+        for f in F["chaining"]["nodes"]:
+            if self.inStorage(f):
+                print("[o] Skipped ", f["id"], "(%s)" % (p["username"],))
+                continue
+
+            self.pushQ(f)
+
         F = self.find_followers(p["id"])
         if "nodes" not in F["followed_by"]:
             return
@@ -174,7 +192,6 @@ class StokaInstance:
                 continue
 
             self.pushQ(f)
-            
 
     # popping (called once)
     def popQ(self):
@@ -184,12 +201,16 @@ class StokaInstance:
         # this is blocking (forever)
         self.rabbit_channel.start_consuming()
     
+
+    # find posts by this node_id
+    def find_posts(self, node_id, max=20):
+        pass
     # find follower
     # by calling instagram secret API 
     # using the Object popped's id
-    def find_followers(self, node_id):
+    def find_followers(self, node_id, max=5):
         root = InstagramRequestNode("ig_user(%s)" % str(node_id))
-        follow = InstagramRequestNode("followed_by.first(100)")
+        follow = InstagramRequestNode("followed_by.first(%d)" % (max,))
         follow.add("count")
         follow.add(InstagramRequestNode("page_info").add("end_cursor").add("has_next_page"))
         follow.add(InstagramRequestNode("nodes").add("id").add("is_verified").add("followed_by_viewer").add("requested_by_viewer").add("full_name").add("profile_pic_url").add("username"))
@@ -200,6 +221,36 @@ class StokaInstance:
         }
         raw = self.igSecret.query(reqbody)
         # print(raw)
+        return json.loads(raw)
+    
+    # find suggested
+    def find_suggested(self, node_id):
+        root = InstagramRequestNode("ig_user(%s)" % str(node_id))
+        chaining = InstagramRequestNode("chaining")
+        nodes = InstagramRequestNode("nodes")
+        nodes.add("blocked_by_viewer")
+        nodes.add("followed_by_viewer")
+        nodes.add("followed_by_viewer")
+        nodes.add("follows_viewer")
+        nodes.add("full_name")
+        nodes.add("has_blocked_viewer")
+        nodes.add("has_requested_viewer")
+        nodes.add("id")
+        nodes.add("is_private")
+        nodes.add("is_verified")
+        nodes.add("profile_pic_url")
+        nodes.add("requested_by_viewer")
+        nodes.add("username")
+        chaining.add(nodes)
+        root.add(chaining)
+        root.add("full_name")
+        reqbody = {
+            "q": str(root),
+            "ref": ""
+        }
+        raw = self.igSecret.query(reqbody)
+        # print(reqbody)
+        print(raw)
         return json.loads(raw)
     
     # entry point
