@@ -17,11 +17,17 @@ class InstagramRequestNode:
     def __init__(self, name):
         self.name = name
         self.children = []
-        
+    
     def add(self, child):
         self.children.append(child)
         return self
+
+    def user_template(self):
+        return self.add("id").add("is_verified").add(InstagramRequestNode("followed_by").add("count")).add("biography").add("thumbnail_src").add("profile_pic_url").add("username").add(InstagramRequestNode("media.after(0, 12)").media_template())
     
+    def media_template(self):
+        return self.add("count").add(InstagramRequestNode("nodes").add("thumbnail_src").add("caption").add("code").add(InstagramRequestNode("likes").add("count")))
+
     def __str__(self):
         lst_children = []
         for c in self.children:
@@ -160,11 +166,7 @@ class StokaInstance:
         ch.basic_ack(delivery_tag = method.delivery_tag)
         p = json.loads(body.decode("utf-8") )
 
-        # pass down the pipeline
-        self.process(p)
-
-        print("[x] Working on ", p["id"], "(%s)" % (p["username"],))
-        
+        # print("[x] Working on ", p["id"], "(%s)" % (p["username"],))
         # print(p)
         
         F = self.find_suggested(p["id"])
@@ -176,10 +178,12 @@ class StokaInstance:
         # for f in F["followed_by"]["nodes"]:
         for f in F["chaining"]["nodes"]:
             if self.inStorage(f):
-                print("[o] Skipped ", f["id"], "(%s)" % (p["username"],))
+                print("[o] Skipped ", f["id"], "(%s)" % (f["username"],))
                 continue
 
+            
             self.pushQ(f)
+            self.process(f)
 
         F = self.find_followers(p["id"])
         if "nodes" not in F["followed_by"]:
@@ -188,10 +192,13 @@ class StokaInstance:
             return
         for f in F["followed_by"]["nodes"]:
             if self.inStorage(f):
-                print("[o] Skipped ", f["id"], "(%s)" % (p["username"],))
+                print("[o] Skipped ", f["id"], "(%s)" % (f["username"],))
                 continue
 
+            # pass down the pipeline
+            
             self.pushQ(f)
+            self.process(f)
 
     # popping (called once)
     def popQ(self):
@@ -205,15 +212,16 @@ class StokaInstance:
     # find posts by this node_id
     def find_posts(self, node_id, max=20):
         pass
+    
     # find follower
     # by calling instagram secret API 
     # using the Object popped's id
-    def find_followers(self, node_id, max=5):
+    def find_followers(self, node_id, max=20):
         root = InstagramRequestNode("ig_user(%s)" % str(node_id))
         follow = InstagramRequestNode("followed_by.first(%d)" % (max,))
         follow.add("count")
         follow.add(InstagramRequestNode("page_info").add("end_cursor").add("has_next_page"))
-        follow.add(InstagramRequestNode("nodes").add("id").add("is_verified").add("followed_by_viewer").add("requested_by_viewer").add("full_name").add("profile_pic_url").add("username"))
+        follow.add(InstagramRequestNode("nodes").user_template())
         root.add(follow)
         reqbody = {
             "q": str(root),
@@ -227,29 +235,16 @@ class StokaInstance:
     def find_suggested(self, node_id):
         root = InstagramRequestNode("ig_user(%s)" % str(node_id))
         chaining = InstagramRequestNode("chaining")
-        nodes = InstagramRequestNode("nodes")
-        nodes.add("blocked_by_viewer")
-        nodes.add("followed_by_viewer")
-        nodes.add("followed_by_viewer")
-        nodes.add("follows_viewer")
-        nodes.add("full_name")
-        nodes.add("has_blocked_viewer")
-        nodes.add("has_requested_viewer")
-        nodes.add("id")
-        nodes.add("is_private")
-        nodes.add("is_verified")
-        nodes.add("profile_pic_url")
-        nodes.add("requested_by_viewer")
-        nodes.add("username")
+        nodes = InstagramRequestNode("nodes").user_template()
         chaining.add(nodes)
         root.add(chaining)
-        root.add("full_name")
+        # root.add("biography").add("likes").add("thumbnail_src").add("follows")
         reqbody = {
             "q": str(root),
             "ref": ""
         }
         raw = self.igSecret.query(reqbody)
-        # print(reqbody)
+        print(reqbody)
         print(raw)
         return json.loads(raw)
     
@@ -268,6 +263,6 @@ if __name__ == '__main__':
     print("Starting Stoka..")
     instance = StokaInstance(connection,{
         "ig_user": {"id" : 184742362, "username": "seed"}
-    }, group_name="discovery_queue")
+    }, group_name="discovery_queue_2")
 
     instance.run()
