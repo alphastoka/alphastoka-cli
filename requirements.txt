@@ -1,5 +1,6 @@
 beautifulsoup4==4.5.1
 bs4==0.0.1
+click==6.6
 get==0.0.20
 post==0.0.12
 public==0.0.37

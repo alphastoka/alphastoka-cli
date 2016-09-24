@@ -1,7 +1,8 @@
 Config = {
 	"instagram": {
+		"cookie": "",
 		"options": {
-			
+			"max_depth": 5
 		},
 		"seeds": [
 			{ "id": "304305305" },
