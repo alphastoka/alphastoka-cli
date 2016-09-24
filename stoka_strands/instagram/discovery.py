@@ -3,9 +3,16 @@ import requests
 import json
 import sys
 import pika
+from pymongo import MongoClient
 
 requests.packages.urllib3.disable_warnings()
 
+#
+# This is the data structure 
+# for Instagram request form-data format
+# which is tree-like / json-ish but 
+# not quite json 
+# if you know what i mean
 class InstagramRequestNode:
     def __init__(self, name):
         self.name = name
@@ -21,14 +28,21 @@ class InstagramRequestNode:
             lst_children.append(str(c))
         return "%s {%s}" % (self.name, ",\n".join(lst_children))
 
+#
+# Instagram secret api caller 
+#
 class InstagramSecretAPI:
     
     paths = {
         "query": 'https://www.instagram.com/query/'
     }
-    def query(self,data, csrf="w0onO0YkXQOT5gnC6srgOGbvbZ3tDDaC"):
-        cookie = "mid=V76nuQAEAAH-CuEOAdoMiatCGu5Z; fbm_124024574287414=base_domain=.instagram.com; sessionid=IGSC2e745c64acfec2c25f6b9ba66880db3560c5b6baf5cc040f437a113321a740be%3AuO4GMPJCl1i1IJHUvQXMCXh5siI4IkTx%3A%7B%22_token_ver%22%3A2%2C%22_auth_user_id%22%3A3776064946%2C%22_token%22%3A%223776064946%3AghEjJxxVFeyX135oEPUGCr5zrPOdjSYe%3A3f2e23e7befda143990030fd057bbedb047b93d234bcb542e421d951283e5c8e%22%2C%22_auth_user_backend%22%3A%22accounts.backends.CaseInsensitiveModelBackend%22%2C%22last_refreshed%22%3A1474631055.237057%2C%22_platform%22%3A4%2C%22_auth_user_hash%22%3A%22%22%7D; ig_pr=2; ig_vw=1266; csrftoken=w0onO0YkXQOT5gnC6srgOGbvbZ3tDDaC; s_network=; ds_user_id=3776064946"
+    def query(self,data, cookie=None, csrf="w0onO0YkXQOT5gnC6srgOGbvbZ3tDDaC"):
 
+        # cookie monster
+        cookie = "mid=V76nuQAEAAH-CuEOAdoMiatCGu5Z; fbm_124024574287414=base_domain=.instagram.com; sessionid=IGSC2e745c64acfec2c25f6b9ba66880db3560c5b6baf5cc040f437a113321a740be%3AuO4GMPJCl1i1IJHUvQXMCXh5siI4IkTx%3A%7B%22_token_ver%22%3A2%2C%22_auth_user_id%22%3A3776064946%2C%22_token%22%3A%223776064946%3AghEjJxxVFeyX135oEPUGCr5zrPOdjSYe%3A3f2e23e7befda143990030fd057bbedb047b93d234bcb542e421d951283e5c8e%22%2C%22_auth_user_backend%22%3A%22accounts.backends.CaseInsensitiveModelBackend%22%2C%22last_refreshed%22%3A1474631055.237057%2C%22_platform%22%3A4%2C%22_auth_user_hash%22%3A%22%22%7D; ig_pr=2; ig_vw=1266; csrftoken=%s; s_network=; ds_user_id=3776064946" %(csrf)
+
+        # build request header
+        # as realistically as possible to mimic browser
         headers = {
             "origin": "https://www.instagram.com",
             "accept-encoding": "gzip, deflate, br",
@@ -49,12 +63,19 @@ class InstagramSecretAPI:
         res = requests.post(self.paths["query"], verify=False, data=data, headers=headers )
         return res.text
 
+#
+# This is used to build form-data request
+# which i assume is some sort of graph query
 class InstagramGraphQueryRequest:
     REF_USER_SHOW = "users::show"
+    
     def __init__(self, ig_user, ref=REF_USER_SHOW):
         self.ig_user = ig_user
         self.ref = ref
     
+    #
+    # the q property of form data request
+    #
     def buildQ(self):
         nodes = Nodes()
         return "ig_user(%s) %s" % (self.ig_user, [
@@ -62,16 +83,19 @@ class InstagramGraphQueryRequest:
             nodes,
             'page_info'
         ])
-
+    
+    #
+    # Serialize as form data
+    #
     def getFormData(self):
         return {
             "q": self.buildQ(),
             "ref": self.ref
         }
 
-# Expose this for AlphaStoka
+# this is for the actual crawling
 class StokaInstance:
-    option_descriptions = (('ig_user', 'initial seed node (user id)', 184742362))
+    #default seed user
     seed_user = {"id": 184742362};
 
     def __init__(self, rabbit_mq_connection, options={}, group_name="default_name"):
@@ -80,40 +104,61 @@ class StokaInstance:
         self.group_name = group_name;
         self.rabbit_channel = rabbit_mq_connection.channel();
         self.rabbit_channel.queue_declare(queue=group_name,durable=True)
+        self.mongo_client = MongoClient("mongodb://localhost:27017")
+        self.mongo_db = self.mongo_client[group_name]
         #seed the queue
         self.pushQ(self.seed_user)
 
         
     STORAGE = {}
     Q = []
+
+    #
+    # Procesisng of the object in each iteration of pop()
+    # object = User object (contains id, and username etc.)
+    #
+    def process(self, object):
+        self.save(object)
+
+    # persist to mongodb
     def save(self, object):
-        self.STORAGE[object["id"]] = object
+        # print(object)
+        print("[x] Persisting %s (%s) / %d" % (object["id"], object["username"], len(self.STORAGE)))
+        self.STORAGE[object["id"]] = True
     
+    # check if it's in mongo or in some sort of fast memoryview
+    # this is for preventing dupe , it's not 100% proof but it's better than nthing
     def inStorage(self, object):
         return object["id"] in self.STORAGE
 
+    # push object to work queue
+    # so other can pick up this object and populate the queue
+    # with the object's follower
     def pushQ(self, object):
         self.rabbit_channel.basic_publish(exchange='',
                       routing_key=self.group_name,
                       body=json.dumps(object),
                       properties=pika.BasicProperties(
-                         delivery_mode = 2, # make message persistent
+                         delivery_mode = 2, 
                       ))
+        print("[x] Sent to ", self.group_name, object["id"], "(%s)" % (object["username"],))
         #self.Q.append(object)
     
+    ## Called on pop done
+    # this is async pop callback
     def _rabbit_consume_callback(self,ch, method, properties, body):
         # print(" [x] Received %r" % (body,))
         # time.sleep( body.count('.') )
         # print(" [x] Done")
+        
         ch.basic_ack(delivery_tag = method.delivery_tag)
         p = json.loads(body.decode("utf-8") )
 
+        # pass down the pipeline
+        self.process(p)
+
         print("[x] Working on ", p["id"], "(%s)" % (p["username"],))
         # p = json.loads()
-
-        if self.inStorage(p):
-            print("In storage", p["id"])
-            return
 
         #save visited node
         self.save(p)
@@ -129,16 +174,19 @@ class StokaInstance:
                 continue
 
             self.pushQ(f)
-            print("[x] Sent to ", self.group_name, f["id"], "(%s)" % (f["username"],))
+            
 
-
+    # popping (called once)
     def popQ(self):
         self.rabbit_channel.basic_qos(prefetch_count=1)
         self.rabbit_channel.basic_consume(self._rabbit_consume_callback,
                       queue=self.group_name)
+        # this is blocking (forever)
         self.rabbit_channel.start_consuming()
-        
-
+    
+    # find follower
+    # by calling instagram secret API 
+    # using the Object popped's id
     def find_followers(self, node_id):
         root = InstagramRequestNode("ig_user(%s)" % str(node_id))
         follow = InstagramRequestNode("followed_by.first(100)")
@@ -154,32 +202,11 @@ class StokaInstance:
         # print(raw)
         return json.loads(raw)
     
-        
+    # entry point
     def run(self):
-        #do wrok
+        #do work!
         self.popQ()
-        
-        
-    def run_sync(self):
-        while True:
-            print("In Queue", len(self.Q), "Stored", len(self.STORAGE))
-            p = self.popQ()
-            
-            if self.inStorage(p):
-                print("In storage", p["id"])
-                continue
 
-            #save visited node
-            self.save(p)
-            # print(p)
-            F = self.find_followers(p["id"])
-            if "nodes" not in F["followed_by"]:
-                continue
-            if "followed_by" not in F:
-                continue
-            for f in F["followed_by"]["nodes"]:
-                self.pushQ(f)
-            
 
 if __name__ == '__main__':
     credentials = pika.PlainCredentials('rabbitmq', 'xEDUqAxIZY7nhe40')
@@ -189,7 +216,7 @@ if __name__ == '__main__':
             
     print("Starting Stoka..")
     instance = StokaInstance(connection,{
-        "ig_user": {"id" : 184742362}
+        "ig_user": {"id" : 184742362, "username": "seed"}
     }, group_name="discovery_queue")
 
     instance.run()
