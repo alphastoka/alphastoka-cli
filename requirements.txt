@@ -1,10 +1,5 @@
 beautifulsoup4==4.5.1
 bs4==0.0.1
-click==6.6
-get==0.0.20
-post==0.0.12
-public==0.0.37
-query-string==0.0.11
-request==0.0.12
+pika==0.10.0
+pymongo==3.3.0
 requests==2.11.1
-setupfiles==0.0.13
