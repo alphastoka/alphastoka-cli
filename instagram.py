@@ -130,6 +130,8 @@ class StokaInstance:
         seed_user_obj = self.get_user(ig_user)
         self.seed_user = seed_user_obj
         # print(seed_user_obj)
+        self.astoka_progress = 0
+        self.astoka_error = 0
         self.pushQ(seed_user_obj)
 
 
@@ -142,19 +144,22 @@ class StokaInstance:
     # object = User object (contains id, and username etc.)
     #
     def process(self, object):
+        self.astoka_progress = self.astoka_progress + 1
         self.save(object)
+        print("@astoka.progress ", self.astoka_progress)
+        print("@astoka.error ", self.astoka_error)
 
     # persist to mongodb
     def save(self, object):
-        # print(object)
-        
         # short term memory checking if we have seen this
         self.STORAGE[object["id"]] = True
         object["_seed_username"] = self.seed_user["username"]
+        object["_dna"] = "stoka-ig"
         try:
             result = self.mongo_db.human.insert_one(object)
             print("[x] Persisting %s (%s) / mongoId -> %s" % (object["id"], object["username"], result.inserted_id))
         except Exception as ex:
+            self.astoka_error = self.astoka_error + 1
             print("[o] Exception while saving to mongo (might be duplicate)", ex)
 
     
