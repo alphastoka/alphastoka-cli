@@ -5,6 +5,8 @@ import sys, os
 import pika, re
 from pymongo import MongoClient
 
+from categorizer import categorize
+
 requests.packages.urllib3.disable_warnings()
 
 #
@@ -126,6 +128,13 @@ class StokaInstance:
         self.rabbit_channel.queue_declare(queue=group_name,durable=True)
         self.mongo_client = MongoClient("mongodb://54.169.89.105:27017")
         self.mongo_db = self.mongo_client['stoka_' + group_name]
+        self.mongo_system = self.mongo_client['stoka_system']
+
+        for doc in self.mongo_system.categorizer.find({}).skip(0).limit(1):
+            del doc["_id"]
+            self.categorizer_kwd = doc
+            break
+
         #seed the queue
         seed_user_obj = self.get_user(ig_user)
         self.seed_user = seed_user_obj
@@ -134,8 +143,6 @@ class StokaInstance:
         self.astoka_error = 0
         self.pushQ(seed_user_obj)
 
-
-        
     STORAGE = {}
     Q = []
 
@@ -155,8 +162,23 @@ class StokaInstance:
         self.STORAGE[object["id"]] = True
         object["_seed_username"] = self.seed_user["username"]
         object["_dna"] = "stoka-ig"
+        object["predicted_age"] = "pending"
+        object["category"] = "pending"
+
+        captions = ""
         try:
-            result = self.mongo_db.human.insert_one(object)
+            for node in object["media"]["nodes"]:
+                print(node)
+                captions +=  node["caption"]
+        except KeyError as ee:
+            print(ee)
+            self.astoka_error = self.astoka_error + 1
+
+        confidence = categorize(str(object["biography"]) + str(captions), self.categorizer_kwd)
+        object["category"] = confidence
+
+        try:
+            result = self.mongo_db.instagram.insert_one(object)
             print("[x] Persisting %s (%s) / mongoId -> %s" % (object["id"], object["username"], result.inserted_id))
         except Exception as ex:
             self.astoka_error = self.astoka_error + 1
@@ -299,7 +321,7 @@ class StokaInstance:
 
 if __name__ == '__main__':
     RABBIT_USR = os.getenv('RABBIT_USR', "rabbitmq")
-    RABBIT_PWD = os.getenv('RABBIT_PWD', "GQLwMVeTrgQ6gAsw")
+    RABBIT_PWD = os.getenv('RABBIT_PWD', "Nc77WrHuAR58yUPl")
     RABBIT_PORT = os.getenv('RABBIT_PORT', 32774)
     RABBIT_HOST = os.getenv('RABBIT_HOST', 'localhost')
     SEED_ID = os.getenv('SEED_ID', '1281620107')
