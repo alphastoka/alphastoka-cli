@@ -1,4 +1,4 @@
-import bs4, json
+import json
 import requests
 import json
 import sys, os
@@ -167,18 +167,20 @@ class StokaInstance:
         object["predicted_age"] = "pending"
         object["category"] = {}
         object["language"] = "-"
-        LNG = self.lidentifier.classify(self.getDescription())
-        if len(LNG) > 0:
-            object["language"] = LNG[0]
+
+        
 
         captions = ""
         try:
             for node in object["media"]["nodes"]:
-                print(node)
+                # print(node)
                 captions +=  node["caption"]
         except KeyError as ee:
             print(ee)
             self.astoka_error = self.astoka_error + 1
+
+        LNG = self.lidentifier.classify(str(object["biography"]) + str(captions))
+        object["language"] = LNG
 
         confidence = categorize(str(object["biography"]) + str(captions), self.categorizer_kwd)
         object["category"] = confidence
@@ -221,6 +223,9 @@ class StokaInstance:
         # print("[x] Working on ", p["id"], "(%s)" % (p["username"],))
         # print(p)
         F = self.find_suggested(p["id"])
+
+        if F is None:
+            return
         
         if "chaining" not in F:
             return
@@ -231,27 +236,25 @@ class StokaInstance:
             if self.inStorage(f):
                 # print("[o] Skipped ", f["id"], "(%s)" % (f["username"],))
                 continue
-
             
-            
-            self.process(f)
             self.pushQ(f)
-
-        F = self.find_followers(p["id"])
-        if "nodes" not in F["followed_by"]:
-            return
-        if "followed_by" not in F:
-            return
-        for f in F["followed_by"]["nodes"]:
-            if self.inStorage(f):
-                # print("[o] Skipped ", f["id"], "(%s)" % (f["username"],))
-                continue
-
-            # pass down the pipeline
-            
-            
             self.process(f)
-            self.pushQ(f)
+
+        # F = self.find_followers(p["id"])
+        # if "nodes" not in F["followed_by"]:
+        #     return
+        # if "followed_by" not in F:
+        #     return
+        # for f in F["followed_by"]["nodes"]:
+        #     if self.inStorage(f):
+        #         # print("[o] Skipped ", f["id"], "(%s)" % (f["username"],))
+        #         continue
+
+        #     # pass down the pipeline
+            
+            
+        #     self.process(f)
+        #     self.pushQ(f)
 
     # popping (called once)
     def popQ(self):
@@ -263,22 +266,22 @@ class StokaInstance:
     
 
     def get_user(self, node_id):
-        if(node_id[0] == "@"):
+        # if(node_id[0] == "@"):
+        if True:
             #user passed in username(str)
-            
             raw = self.igSecret.curl("https://instagram.com/" + node_id[1:])
             m = re.search(r'window._sharedData = ([\s\S]*?);</script>', raw)
             igram = json.loads(m.group(1))
             return igram["entry_data"]["ProfilePage"][0]["user"]
 
-        root = InstagramRequestNode("ig_user(%s)" % str(node_id))
-        root.user_template()
-        reqbody = {
-            "q": str(root),
-            "ref": ""
-        }
-        raw = self.igSecret.query(reqbody)
-        return json.loads(raw)
+        # root = InstagramRequestNode("ig_user(%s)" % str(node_id))
+        # root.user_template()
+        # reqbody = {
+        #     "q": str(root),
+        #     "ref": ""
+        # }
+        # raw = self.igSecret.query(reqbody)
+        # return json.loads(raw)
 
     
     # find follower
@@ -314,10 +317,12 @@ class StokaInstance:
         raw = self.igSecret.query(reqbody)
         # print(reqbody)
         # print(raw)
+        px = None
         try:
             px = json.loads(raw)
         except Exception as x:
             print("[o] Error deserializing")
+            self.astoka_error = self.astoka_error + 1
             print(x)
         return px
     
@@ -332,8 +337,8 @@ if __name__ == '__main__':
     RABBIT_PWD = os.getenv('RABBIT_PWD', "Nc77WrHuAR58yUPl")
     RABBIT_PORT = os.getenv('RABBIT_PORT', 32774)
     RABBIT_HOST = os.getenv('RABBIT_HOST', 'localhost')
-    SEED_ID = os.getenv('SEED_ID', '1281620107')
-    GROUP_NAME = os.getenv('GROUP_NAME', 'discovery_queue_4')
+    SEED_ID = os.getenv('SEED_ID', 'chasing_delicious')
+    GROUP_NAME = os.getenv('GROUP_NAME', 'discovery_queue_4x')
 
     print("using configuration", RABBIT_HOST, RABBIT_PWD, RABBIT_USR, int(RABBIT_PORT))
 
