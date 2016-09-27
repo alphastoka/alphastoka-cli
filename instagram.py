@@ -4,6 +4,7 @@ import json
 import sys, os
 import pika, re
 from pymongo import MongoClient
+from langid.langid import LanguageIdentifier, model
 
 from categorizer import categorize
 
@@ -129,6 +130,7 @@ class StokaInstance:
         self.mongo_client = MongoClient("mongodb://54.169.89.105:27017")
         self.mongo_db = self.mongo_client['stoka_' + group_name]
         self.mongo_system = self.mongo_client['stoka_system']
+        self.lidentifier = LanguageIdentifier.from_modelstring(model, norm_probs=True)
 
         for doc in self.mongo_system.categorizer.find({}).skip(0).limit(1):
             del doc["_id"]
@@ -163,7 +165,11 @@ class StokaInstance:
         object["_seed_username"] = self.seed_user["username"]
         object["_dna"] = "stoka-ig"
         object["predicted_age"] = "pending"
-        object["category"] = "pending"
+        object["category"] = {}
+        object["language"] = "-"
+        LNG = self.lidentifier.classify(self.getDescription())
+        if len(LNG) > 0:
+            object["language"] = LNG[0]
 
         captions = ""
         try:
@@ -227,8 +233,9 @@ class StokaInstance:
                 continue
 
             
-            self.pushQ(f)
+            
             self.process(f)
+            self.pushQ(f)
 
         F = self.find_followers(p["id"])
         if "nodes" not in F["followed_by"]:
@@ -242,8 +249,9 @@ class StokaInstance:
 
             # pass down the pipeline
             
-            self.pushQ(f)
+            
             self.process(f)
+            self.pushQ(f)
 
     # popping (called once)
     def popQ(self):
