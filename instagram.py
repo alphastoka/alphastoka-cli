@@ -25,8 +25,8 @@ class InstagramRequestNode:
         self.children.append(child)
         return self
 
-    def user_template(self):
-        return self.add("id").add("is_verified").add(InstagramRequestNode("followed_by").add("count")).add("biography").add("thumbnail_src").add("profile_pic_url").add("username").add(InstagramRequestNode("media.after(0, 12)").media_template())
+    def user_template(self, after_media):
+        return self.add("id").add("is_verified").add(InstagramRequestNode("followed_by").add("count")).add("biography").add("thumbnail_src").add("profile_pic_url").add("username").add(InstagramRequestNode("media.after(0, " + str(after_media) +")").media_template())
     
     def media_template(self):
         return self.add("count").add(InstagramRequestNode("nodes").add("thumbnail_src").add("caption").add("code").add(InstagramRequestNode("likes").add("count")))
@@ -122,7 +122,7 @@ class InstagramGraphQueryRequest:
 # this is for the actual crawling
 class StokaInstance:
 
-    def __init__(self, rabbit_mq_connection, ig_user, group_name="default_stoka"):
+    def __init__(self, rabbit_mq_connection, ig_user, group_name="default_stoka", media_max= 12):
         self.igSecret = InstagramSecretAPI()
         self.group_name = group_name;
         self.rabbit_channel = rabbit_mq_connection.channel();
@@ -131,7 +131,7 @@ class StokaInstance:
         self.mongo_db = self.mongo_client['stoka_' + group_name]
         self.mongo_system = self.mongo_client['stoka_system']
         self.lidentifier = LanguageIdentifier.from_modelstring(model, norm_probs=True)
-
+        self.media_max = media_max
         for doc in self.mongo_system.categorizer.find({}).skip(0).limit(1):
             del doc["_id"]
             self.categorizer_kwd = doc
@@ -167,8 +167,6 @@ class StokaInstance:
         object["predicted_age"] = "pending"
         object["category"] = {}
         object["language"] = "-"
-
-        
 
         captions = ""
         try:
@@ -222,7 +220,7 @@ class StokaInstance:
 
         # print("[x] Working on ", p["id"], "(%s)" % (p["username"],))
         # print(p)
-        F = self.find_suggested(p["id"])
+        F = self.find_suggested(p["id"], media_max = self.media_max)
 
         if F is None:
             return
@@ -269,7 +267,7 @@ class StokaInstance:
         # if(node_id[0] == "@"):
         if True:
             #user passed in username(str)
-            raw = self.igSecret.curl("https://instagram.com/" + node_id[1:])
+            raw = self.igSecret.curl("https://instagram.com/" + node_id)
             m = re.search(r'window._sharedData = ([\s\S]*?);</script>', raw)
             igram = json.loads(m.group(1))
             return igram["entry_data"]["ProfilePage"][0]["user"]
@@ -287,12 +285,12 @@ class StokaInstance:
     # find follower
     # by calling instagram secret API 
     # using the Object popped's id
-    def find_followers(self, node_id, max=20):
+    def find_followers(self, node_id, max=20, media_max=12):
         root = InstagramRequestNode("ig_user(%s)" % str(node_id))
         follow = InstagramRequestNode("followed_by.first(%d)" % (max,))
         follow.add("count")
         follow.add(InstagramRequestNode("page_info").add("end_cursor").add("has_next_page"))
-        follow.add(InstagramRequestNode("nodes").user_template())
+        follow.add(InstagramRequestNode("nodes").user_template(media_max))
         root.add(follow)
         reqbody = {
             "q": str(root),
@@ -303,10 +301,10 @@ class StokaInstance:
         return json.loads(raw)
     
     # find suggested
-    def find_suggested(self, node_id):
+    def find_suggested(self, node_id, media_max=12):
         root = InstagramRequestNode("ig_user(%s)" % str(node_id))
         chaining = InstagramRequestNode("chaining")
-        nodes = InstagramRequestNode("nodes").user_template()
+        nodes = InstagramRequestNode("nodes").user_template(media_max)
         chaining.add(nodes)
         root.add(chaining)
         # root.add("biography").add("likes").add("thumbnail_src").add("follows")
@@ -338,6 +336,7 @@ if __name__ == '__main__':
     RABBIT_PORT = os.getenv('RABBIT_PORT', 32774)
     RABBIT_HOST = os.getenv('RABBIT_HOST', 'localhost')
     SEED_ID = os.getenv('SEED_ID', 'chasing_delicious')
+    DEPTH = os.getenv('DEPTH', '12')
     GROUP_NAME = os.getenv('GROUP_NAME', 'discovery_queue_4x')
 
     print("using configuration", RABBIT_HOST, RABBIT_PWD, RABBIT_USR, int(RABBIT_PORT))
@@ -351,6 +350,6 @@ if __name__ == '__main__':
     print("Starting Stoka..")
     
         
-    instance = StokaInstance(connection,ig_user=SEED_ID, group_name=GROUP_NAME)
+    instance = StokaInstance(connection,ig_user=SEED_ID, group_name=GROUP_NAME, media_max=int(DEPTH))
 
     instance.run()
