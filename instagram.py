@@ -127,7 +127,7 @@ class StokaInstance:
         self.group_name = group_name;
         self.rabbit_channel = rabbit_mq_connection.channel();
         self.rabbit_channel.queue_declare(queue=group_name,durable=True)
-        self.mongo_client = MongoClient("mongodb://54.169.89.105:27017")
+        self.mongo_client = MongoClient("mongodb://cloud.alphastoka.com:27017")
         self.mongo_db = self.mongo_client['stoka_' + group_name]
         self.mongo_system = self.mongo_client['stoka_system']
         self.lidentifier = LanguageIdentifier.from_modelstring(model, norm_probs=True)
