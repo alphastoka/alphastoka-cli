@@ -11,23 +11,23 @@ from categorizer import categorize
 requests.packages.urllib3.disable_warnings()
 
 #
-# This is the data structure 
+# This is the data structure
 # for Instagram request form-data format
-# which is tree-like / json-ish but 
-# not quite json 
+# which is tree-like / json-ish but
+# not quite json
 # if you know what i mean
 class InstagramRequestNode:
     def __init__(self, name):
         self.name = name
         self.children = []
-    
+
     def add(self, child):
         self.children.append(child)
         return self
 
     def user_template(self, after_media):
         return self.add("id").add("is_verified").add(InstagramRequestNode("followed_by").add("count")).add("biography").add("thumbnail_src").add("profile_pic_url").add("username").add(InstagramRequestNode("media.after(0, " + str(after_media) +")").media_template())
-    
+
     def media_template(self):
         return self.add("count").add(InstagramRequestNode("nodes").add("thumbnail_src").add("caption").add("code").add(InstagramRequestNode("likes").add("count")))
 
@@ -38,11 +38,11 @@ class InstagramRequestNode:
         return "%s {%s}" % (self.name, ",\n".join(lst_children))
 
 #
-# Instagram secret api caller 
+# Instagram secret api caller
 #
 _SAMPLE_COOKIE = "mid=V76nuQAEAAH-CuEOAdoMiatCGu5Z; fbm_124024574287414=base_domain=.instagram.com; sessionid=IGSC2e745c64acfec2c25f6b9ba66880db3560c5b6baf5cc040f437a113321a740be%3AuO4GMPJCl1i1IJHUvQXMCXh5siI4IkTx%3A%7B%22_token_ver%22%3A2%2C%22_auth_user_id%22%3A3776064946%2C%22_token%22%3A%223776064946%3AghEjJxxVFeyX135oEPUGCr5zrPOdjSYe%3A3f2e23e7befda143990030fd057bbedb047b93d234bcb542e421d951283e5c8e%22%2C%22_auth_user_backend%22%3A%22accounts.backends.CaseInsensitiveModelBackend%22%2C%22last_refreshed%22%3A1474631055.237057%2C%22_platform%22%3A4%2C%22_auth_user_hash%22%3A%22%22%7D; ig_pr=2; ig_vw=1266; csrftoken=w0onO0YkXQOT5gnC6srgOGbvbZ3tDDaC; s_network=; ds_user_id=3776064946"
 class InstagramSecretAPI:
-    
+
     paths = {
         "query": 'https://www.instagram.com/query/'
     }
@@ -85,7 +85,7 @@ class InstagramSecretAPI:
             "authority": "www.instagram.com",
             "referer": "https://www.instagram.com/nancyajram/"
         }
-        
+
         res = requests.post(self.paths["query"], verify=False, data=data, headers=headers )
         return res.text
 
@@ -94,22 +94,22 @@ class InstagramSecretAPI:
 # which i assume is some sort of graph query
 class InstagramGraphQueryRequest:
     REF_USER_SHOW = "users::show"
-    
+
     def __init__(self, ig_user, ref=REF_USER_SHOW):
         self.ig_user = ig_user
         self.ref = ref
-    
+
     #
     # the q property of form data request
     #
     def buildQ(self):
         nodes = Nodes()
         return "ig_user(%s) %s" % (self.ig_user, [
-            'count', 
+            'count',
             nodes,
             'page_info'
         ])
-    
+
     #
     # Serialize as form data
     #
@@ -177,6 +177,8 @@ class StokaInstance:
             print(ee)
             self.astoka_error = self.astoka_error + 1
 
+
+        ###   ['th', 0.6]  ['en', 0.1] ['es', 0.3]
         LNG = self.lidentifier.classify(str(object["biography"]) + str(captions))
         object["language"] = LNG
 
@@ -190,7 +192,7 @@ class StokaInstance:
             self.astoka_error = self.astoka_error + 1
             print("[o] Exception while saving to mongo (might be duplicate)", ex)
 
-    
+
     # check if it's in mongo or in some sort of fast memoryview
     # this is for preventing dupe , it's not 100% proof but it's better than nthing
     def inStorage(self, object):
@@ -204,11 +206,11 @@ class StokaInstance:
                       routing_key=self.group_name,
                       body=json.dumps(object),
                       properties=pika.BasicProperties(
-                         delivery_mode = 2, 
+                         delivery_mode = 2,
                       ))
         # print("[x] Sent to ", self.group_name, object["id"], "(%s)" % (object["username"],))
         #self.Q.append(object)
-    
+
     ## Called on pop done
     # this is async pop callback
     def _rabbit_consume_callback(self,ch, method, properties, body):
@@ -224,7 +226,7 @@ class StokaInstance:
 
         if F is None:
             return
-        
+
         if "chaining" not in F:
             return
         if "nodes" not in F["chaining"]:
@@ -234,7 +236,7 @@ class StokaInstance:
             if self.inStorage(f):
                 # print("[o] Skipped ", f["id"], "(%s)" % (f["username"],))
                 continue
-            
+
             self.pushQ(f)
             self.process(f)
 
@@ -249,8 +251,8 @@ class StokaInstance:
         #         continue
 
         #     # pass down the pipeline
-            
-            
+
+
         #     self.process(f)
         #     self.pushQ(f)
 
@@ -261,7 +263,7 @@ class StokaInstance:
                       queue=self.group_name)
         # this is blocking (forever)
         self.rabbit_channel.start_consuming()
-    
+
 
     def get_user(self, node_id):
         # if(node_id[0] == "@"):
@@ -281,9 +283,9 @@ class StokaInstance:
         # raw = self.igSecret.query(reqbody)
         # return json.loads(raw)
 
-    
+
     # find follower
-    # by calling instagram secret API 
+    # by calling instagram secret API
     # using the Object popped's id
     def find_followers(self, node_id, max=20, media_max=12):
         root = InstagramRequestNode("ig_user(%s)" % str(node_id))
@@ -299,7 +301,7 @@ class StokaInstance:
         raw = self.igSecret.query(reqbody)
         # print(raw)
         return json.loads(raw)
-    
+
     # find suggested
     def find_suggested(self, node_id, media_max=12):
         root = InstagramRequestNode("ig_user(%s)" % str(node_id))
@@ -323,7 +325,7 @@ class StokaInstance:
             self.astoka_error = self.astoka_error + 1
             print(x)
         return px
-    
+
     # entry point
     def run(self):
         #do work!
@@ -346,10 +348,10 @@ if __name__ == '__main__':
     print("Connecting to Rabbit..")
     connection = pika.BlockingConnection(pika.ConnectionParameters(
                RABBIT_HOST, port=int(RABBIT_PORT), credentials=credentials))
-            
+
     print("Starting Stoka..")
-    
-        
+
+
     instance = StokaInstance(connection,ig_user=SEED_ID, group_name=GROUP_NAME, media_max=int(DEPTH))
 
     instance.run()
